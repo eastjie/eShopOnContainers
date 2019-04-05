@@ -98,7 +98,7 @@ namespace Microsoft.eShopOnContainers.BuildingBlocks.EventBusRabbitMQ
 
                     channel.BasicPublish(exchange: BROKER_NAME,
                                      routingKey: eventName,
-                                     mandatory:true,
+                                     mandatory: true,
                                      basicProperties: properties,
                                      body: body);
                 });
@@ -112,6 +112,7 @@ namespace Microsoft.eShopOnContainers.BuildingBlocks.EventBusRabbitMQ
 
             DoInternalSubscription(eventName);
             _subsManager.AddDynamicSubscription<TH>(eventName);
+            StartBasicConsume();
         }
 
         public void Subscribe<T, TH>()
@@ -124,6 +125,7 @@ namespace Microsoft.eShopOnContainers.BuildingBlocks.EventBusRabbitMQ
             _logger.LogInformation("Subscribing to event {EventName} with {EventHandler}", eventName, typeof(TH).GetGenericTypeName());
 
             _subsManager.AddSubscription<T, TH>();
+            StartBasicConsume();
         }
 
         private void DoInternalSubscription(string eventName)
@@ -172,6 +174,50 @@ namespace Microsoft.eShopOnContainers.BuildingBlocks.EventBusRabbitMQ
             _subsManager.Clear();
         }
 
+        private void StartBasicConsume()
+        {
+            if (_consumerChannel != null)
+            {
+                var consumer = new AsyncEventingBasicConsumer(_consumerChannel);
+
+                consumer.Received += Consumer_Received;
+
+                _consumerChannel.BasicConsume(
+                    queue: _queueName,
+                    autoAck: false,
+                    consumer: consumer);
+            }
+            else
+            {
+                _logger.LogError("StartBasicConsume can't call on _consumerChannel == null");
+            }
+        }
+
+        private async Task Consumer_Received(object sender, BasicDeliverEventArgs eventArgs)
+        {
+            var eventName = eventArgs.RoutingKey;
+            var message = Encoding.UTF8.GetString(eventArgs.Body);
+
+            try
+            {
+                if (message.ToLowerInvariant().Contains("throw-fake-exception"))
+                {
+                    throw new InvalidOperationException($"Fake exception requested: \"{message}\"");
+                }
+
+                await ProcessEvent(eventName, message);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "----- ERROR Processing message \"{Message}\"", message);
+            }
+
+            // Even on exception we take the message off the queue.
+            // in a REAL WORLD app this should be handled with a Dead Letter Exchange (DLX). 
+            // For more information see: https://www.rabbitmq.com/dlx.html
+            _consumerChannel.BasicAck(eventArgs.DeliveryTag, multiple: false);
+        }
+
         private IModel CreateConsumerChannel()
         {
             if (!_persistentConnection.IsConnected)
@@ -182,7 +228,7 @@ namespace Microsoft.eShopOnContainers.BuildingBlocks.EventBusRabbitMQ
             var channel = _persistentConnection.CreateModel();
 
             channel.ExchangeDeclare(exchange: BROKER_NAME,
-                                 type: "direct");
+                                    type: "direct");
 
             channel.QueueDeclare(queue: _queueName,
                                  durable: true,
@@ -190,26 +236,11 @@ namespace Microsoft.eShopOnContainers.BuildingBlocks.EventBusRabbitMQ
                                  autoDelete: false,
                                  arguments: null);
 
-
-            var consumer = new EventingBasicConsumer(channel);
-            consumer.Received += async (model, ea) =>
-            {
-                var eventName = ea.RoutingKey;
-                var message = Encoding.UTF8.GetString(ea.Body);
-
-                await ProcessEvent(eventName, message);
-
-                channel.BasicAck(ea.DeliveryTag,multiple:false);
-            };
-
-            channel.BasicConsume(queue: _queueName,
-                                 autoAck: false,
-                                 consumer: consumer);
-
             channel.CallbackException += (sender, ea) =>
             {
                 _consumerChannel.Dispose();
                 _consumerChannel = CreateConsumerChannel();
+                StartBasicConsume();
             };
 
             return channel;
