@@ -1,9 +1,4 @@
-﻿using System;
-using System.Linq;
-using System.Security.Claims;
-using System.Text.Encodings.Web;
-using System.Threading.Tasks;
-using IdentityModel;
+﻿using IdentityModel;
 using IdentityServer4;
 using IdentityServer4.Models;
 using IdentityServer4.Services;
@@ -15,7 +10,12 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.eShopOnContainers.Services.Identity.API.Models;
 using Microsoft.eShopOnContainers.Services.Identity.API.Models.AccountViewModels;
 using Microsoft.eShopOnContainers.Services.Identity.API.Services;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using System;
+using System.Linq;
+using System.Security.Claims;
+using System.Threading.Tasks;
 
 namespace Microsoft.eShopOnContainers.Services.Identity.API.Controllers
 {
@@ -32,6 +32,7 @@ namespace Microsoft.eShopOnContainers.Services.Identity.API.Controllers
         private readonly IClientStore _clientStore;
         private readonly ILogger<AccountController> _logger;
         private readonly UserManager<ApplicationUser> _userManager;
+        private readonly IConfiguration _configuration;
 
         public AccountController(
 
@@ -40,13 +41,15 @@ namespace Microsoft.eShopOnContainers.Services.Identity.API.Controllers
             IIdentityServerInteractionService interaction,
             IClientStore clientStore,
             ILogger<AccountController> logger,
-            UserManager<ApplicationUser> userManager)
+            UserManager<ApplicationUser> userManager,
+            IConfiguration configuration)
         {
             _loginService = loginService;
             _interaction = interaction;
             _clientStore = clientStore;
             _logger = logger;
             _userManager = userManager;
+            _configuration = configuration;
         }
 
         /// <summary>
@@ -81,20 +84,21 @@ namespace Microsoft.eShopOnContainers.Services.Identity.API.Controllers
 
                 if (await _loginService.ValidateCredentials(user, model.Password))
                 {
+                    var tokenLifetime = _configuration.GetValue("TokenLifetimeMinutes", 120);
+
                     var props = new AuthenticationProperties
                     {
-                        ExpiresUtc = DateTimeOffset.UtcNow.AddHours(2),
+                        ExpiresUtc = DateTimeOffset.UtcNow.AddMinutes(tokenLifetime),
                         AllowRefresh = true,
                         RedirectUri = model.ReturnUrl
                     };
 
                     if (model.RememberMe)
                     {
-                        props = new AuthenticationProperties
-                        {
-                            IsPersistent = true,
-                            ExpiresUtc = DateTimeOffset.UtcNow.AddYears(10)
-                        };
+                        var permanentTokenLifetime = _configuration.GetValue("PermanentTokenLifetimeDays", 365);
+
+                        props.ExpiresUtc = DateTimeOffset.UtcNow.AddDays(permanentTokenLifetime);
+                        props.IsPersistent = true;
                     };
 
                     await _loginService.SignInAsync(user, props);

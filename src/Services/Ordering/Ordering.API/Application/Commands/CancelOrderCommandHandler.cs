@@ -27,13 +27,13 @@ namespace Ordering.API.Application.Commands
         public async Task<bool> Handle(CancelOrderCommand command, CancellationToken cancellationToken)
         {
             var orderToUpdate = await _orderRepository.GetAsync(command.OrderNumber);
-            if(orderToUpdate == null)
+            if (orderToUpdate == null)
             {
                 return false;
             }
 
             orderToUpdate.SetCancelledStatus();
-            return await _orderRepository.UnitOfWork.SaveEntitiesAsync();
+            return await _orderRepository.UnitOfWork.SaveEntitiesAsync(cancellationToken);
         }
     }
 

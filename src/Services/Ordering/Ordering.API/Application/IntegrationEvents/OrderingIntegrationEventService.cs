@@ -1,17 +1,12 @@
 ﻿using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.eShopOnContainers.BuildingBlocks.EventBus.Abstractions;
 using Microsoft.eShopOnContainers.BuildingBlocks.EventBus.Events;
 using Microsoft.eShopOnContainers.BuildingBlocks.IntegrationEventLogEF;
 using Microsoft.eShopOnContainers.BuildingBlocks.IntegrationEventLogEF.Services;
-using Microsoft.eShopOnContainers.BuildingBlocks.IntegrationEventLogEF.Utilities;
-using Microsoft.eShopOnContainers.Services.Ordering.API;
 using Microsoft.eShopOnContainers.Services.Ordering.Infrastructure;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Data.Common;
-using System.Diagnostics;
-using System.Linq;
 using System.Threading.Tasks;
 
 namespace Ordering.API.Application.IntegrationEvents
@@ -21,7 +16,6 @@ namespace Ordering.API.Application.IntegrationEvents
         private readonly Func<DbConnection, IIntegrationEventLogService> _integrationEventLogServiceFactory;
         private readonly IEventBus _eventBus;
         private readonly OrderingContext _orderingContext;
-        private readonly IntegrationEventLogContext _eventLogContext;
         private readonly IIntegrationEventLogService _eventLogService;
         private readonly ILogger<OrderingIntegrationEventService> _logger;
 
@@ -32,18 +26,17 @@ namespace Ordering.API.Application.IntegrationEvents
             ILogger<OrderingIntegrationEventService> logger)
         {
             _orderingContext = orderingContext ?? throw new ArgumentNullException(nameof(orderingContext));
-            _eventLogContext = eventLogContext ?? throw new ArgumentNullException(nameof(eventLogContext));
             _integrationEventLogServiceFactory = integrationEventLogServiceFactory ?? throw new ArgumentNullException(nameof(integrationEventLogServiceFactory));
             _eventBus = eventBus ?? throw new ArgumentNullException(nameof(eventBus));
             _eventLogService = _integrationEventLogServiceFactory(_orderingContext.Database.GetDbConnection());
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        public async Task PublishEventsThroughEventBusAsync()
+        public async Task PublishEventsThroughEventBusAsync(Guid transactionId)
         {
-            var pendindLogEvents = await _eventLogService.RetrieveEventLogsPendingToPublishAsync();
+            var pendingLogEvents = await _eventLogService.RetrieveEventLogsPendingToPublishAsync(transactionId);
 
-            foreach (var logEvt in pendindLogEvents)
+            foreach (var logEvt in pendingLogEvents)
             {
                 _logger.LogInformation("----- Publishing integration event: {IntegrationEventId} from {AppName} - ({@IntegrationEvent})", logEvt.EventId, Program.AppName, logEvt.IntegrationEvent);
 
@@ -66,7 +59,7 @@ namespace Ordering.API.Application.IntegrationEvents
         {
             _logger.LogInformation("----- Enqueuing integration event {IntegrationEventId} to repository ({@IntegrationEvent})", evt.Id, evt);
 
-            await _eventLogService.SaveEventAsync(evt, _orderingContext.GetCurrentTransaction.GetDbTransaction());
+            await _eventLogService.SaveEventAsync(evt, _orderingContext.GetCurrentTransaction());
         }
     }
 }
